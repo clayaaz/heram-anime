@@ -1,42 +1,70 @@
 import { useState, useEffect, useCallback } from "react";
 
-const JIKAN_BASE = "https://api.jikan.moe/v4";
+const ANILIST_URL = "https://graphql.anilist.co";
 const TMDB_KEY = "84f78b5761422e64caf879f69c8b8e33";
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const VIDSRC = "https://vidsrc-embed.ru/embed/tv";
 
 const GENRES = [
-  { id: 1, name: "Action" },
-  { id: 2, name: "Adventure" },
-  { id: 4, name: "Comedy" },
-  { id: 8, name: "Drama" },
-  { id: 10, name: "Fantasy" },
-  { id: 14, name: "Horror" },
-  { id: 7, name: "Mystery" },
-  { id: 22, name: "Romance" },
-  { id: 24, name: "Sci-Fi" },
-  { id: 36, name: "Slice of Life" },
-  { id: 30, name: "Sports" },
-  { id: 37, name: "Supernatural" },
-  { id: 41, name: "Thriller" }
+  "Action", "Adventure", "Comedy", "Drama", "Fantasy", "Horror",
+  "Mystery", "Romance", "Sci-Fi", "Slice of Life", "Sports", "Supernatural", "Thriller"
 ];
 
 const SORT_OPTIONS = [
-  { value: "members_desc", label: "Most Popular", order_by: "members", sort: "desc" },
-  { value: "start_date_desc", label: "Newest First", order_by: "start_date", sort: "desc" },
-  { value: "start_date_asc", label: "Oldest First", order_by: "start_date", sort: "asc" },
-  { value: "score_desc", label: "Top Rated", order_by: "score", sort: "desc" },
-  { value: "favorites_desc", label: "Most Favourited", order_by: "favorites", sort: "desc" },
+  { value: "popularity_desc", label: "Most Popular", sort: ["POPULARITY_DESC"] },
+  { value: "start_date_desc", label: "Newest First", sort: ["START_DATE_DESC"] },
+  { value: "start_date_asc", label: "Oldest First", sort: ["START_DATE"] },
+  { value: "score_desc", label: "Top Rated", sort: ["SCORE_DESC"] },
+  { value: "favorites_desc", label: "Most Favourited", sort: ["FAVOURITES_DESC"] },
 ];
+
+const MEDIA_LIST_FIELDS = `
+  id
+  idMal
+  title { romaji english native }
+  coverImage { large medium }
+  averageScore
+  startDate { year }
+  episodes
+`;
+
+const ANIME_LIST_QUERY = `
+  query ($page: Int, $perPage: Int, $sort: [MediaSort], $genre_in: [String], $search: String) {
+    Page(page: $page, perPage: $perPage) {
+      pageInfo { lastPage }
+      media(type: ANIME, sort: $sort, genre_in: $genre_in, search: $search, isAdult: false) {
+        ${MEDIA_LIST_FIELDS}
+      }
+    }
+  }
+`;
+
+const ANIME_DETAIL_QUERY = `
+  query ($id: Int, $idMal: Int) {
+    Media(id: $id, idMal: $idMal, type: ANIME) {
+      id
+      idMal
+      title { romaji english native }
+      coverImage { large medium }
+      averageScore
+      startDate { year }
+      episodes
+      description(asHtml: false)
+      format
+      genres
+    }
+  }
+`;
 
 function getHistory() {
   try { return JSON.parse(localStorage.getItem("anime_history") || "[]"); }
   catch { return []; }
 }
 function saveHistory(item, tmdbId, season, ep) {
-  const h = getHistory().filter(x => !(x.id === item.mal_id && x.season === season && x.episode === ep));
+  const h = getHistory().filter(x => !(x.id === item.id && x.season === season && x.episode === ep));
   h.unshift({
-    id: item.mal_id,
+    id: item.id,
+    malId: item.mal_id,
     tmdbId: tmdbId,
     name: item.title,
     poster: item.images?.jpg?.image_url || "",
@@ -48,53 +76,79 @@ function saveHistory(item, tmdbId, season, ep) {
 }
 function clearHistory() { localStorage.removeItem("anime_history"); }
 
+async function anilistQuery(query, variables = {}) {
+  const r = await fetch(ANILIST_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ query, variables }),
+  });
+  const json = await r.json();
+  if (json.errors?.length) throw new Error(json.errors[0].message);
+  return json.data;
+}
+
+function normalizeMedia(media) {
+  if (!media) return null;
+  return {
+    id: media.id,
+    mal_id: media.idMal ?? media.id,
+    title: media.title?.english || media.title?.romaji || "Unknown",
+    title_japanese: media.title?.native,
+    images: { jpg: { image_url: media.coverImage?.large || media.coverImage?.medium || "" } },
+    score: media.averageScore ? media.averageScore / 10 : 0,
+    year: media.startDate?.year,
+    aired: media.startDate?.year ? { prop: { from: { year: media.startDate.year } } } : undefined,
+    episodesCount: media.episodes,
+  };
+}
+
+function normalizeDetails(media) {
+  if (!media) return null;
+  return {
+    synopsis: media.description,
+    episodes: media.episodes,
+    type: media.format,
+    genres: (media.genres || []).map(g => ({ mal_id: g, name: g })),
+  };
+}
+
+function generateEpisodes(count) {
+  if (!count || count <= 0) return [];
+  return Array.from({ length: count }, (_, i) => ({
+    mal_id: i + 1,
+    title: `Episode ${i + 1}`,
+  }));
+}
+
 async function fetchAnime(page = 1, genre = "", sortObj, search = "") {
-  const params = new URLSearchParams();
-  params.set("page", page);
-  params.set("limit", 20);
-  params.set("sfw", "true");
-  
-  if (genre) params.set("genres", genre);
-  if (search.trim()) {
-    params.set("q", search);
-    params.set("order_by", "score");
-    params.set("sort", "desc");
-  } else {
-    params.set("order_by", sortObj.order_by);
-    params.set("sort", sortObj.sort);
+  const variables = {
+    page,
+    perPage: 20,
+    sort: search.trim() ? ["SEARCH_MATCH"] : sortObj.sort,
+    genre_in: genre ? [genre] : undefined,
+    search: search.trim() || undefined,
+  };
+
+  const data = await anilistQuery(ANIME_LIST_QUERY, variables);
+  const pageData = data.Page;
+
+  return {
+    data: (pageData?.media || []).map(normalizeMedia),
+    pagination: { last_visible_page: pageData?.pageInfo?.lastPage || 1 },
+  };
+}
+
+async function fetchDetails({ id, malId } = {}) {
+  let media = null;
+  if (id) {
+    const data = await anilistQuery(ANIME_DETAIL_QUERY, { id });
+    media = data.Media;
   }
-  
-  const r = await fetch(`${JIKAN_BASE}/anime?${params.toString()}`);
-  return r.json();
-}
-
-async function fetchDetails(id) {
-  const r = await fetch(`${JIKAN_BASE}/anime/${id}/full`);
-  return r.json();
-}
-
-// Fetch episodes from Jikan
-async function fetchEpisodes(id, page = 1) {
-  const r = await fetch(`${JIKAN_BASE}/anime/${id}/episodes?page=${page}`);
-  return r.json();
-}
-
-// Fetch ALL episodes across all pages
-async function fetchAllEpisodes(id) {
-  const allEpisodes = [];
-  let page = 1;
-  let hasNextPage = true;
-  
-  while (hasNextPage && page <= 5) {
-    const data = await fetchEpisodes(id, page);
-    if (data.data) {
-      allEpisodes.push(...data.data);
-    }
-    hasNextPage = data.pagination?.has_next_page || false;
-    page++;
+  if (!media && (malId || id)) {
+    const data = await anilistQuery(ANIME_DETAIL_QUERY, { idMal: malId || id });
+    media = data.Media;
   }
-  
-  return allEpisodes;
+  return { data: normalizeDetails(media), media: normalizeMedia(media) };
 }
 
 async function tmdb(path, params = {}) {
@@ -209,7 +263,7 @@ export default function App() {
     if (!selected) return;
     setDetails(null);
     setEpisodes([]);
-    setEpisodesLoading(false);
+    setEpisodesLoading(true);
     setTmdbId(null);
     setTmdbLoading(true);
     setEpisode(1);
@@ -219,13 +273,10 @@ export default function App() {
     const detectedSeason = detectSeason(selected.title);
     setSeason(detectedSeason);
     
-    // Fetch MAL Details
-    fetchDetails(selected.mal_id).then(d => setDetails(d.data));
-    
-    // Fetch episodes from Jikan
-    setEpisodesLoading(true);
-    fetchAllEpisodes(selected.mal_id).then(eps => {
-      setEpisodes(eps);
+    // Fetch anime details from AniList
+    fetchDetails({ id: selected.id, malId: selected.mal_id }).then(result => {
+      setDetails(result.data);
+      setEpisodes(generateEpisodes(result.data?.episodes));
       setEpisodesLoading(false);
     });
     
@@ -314,7 +365,7 @@ export default function App() {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button className={`tag ${selectedGenre === "" ? "active" : ""}`} onClick={() => changeGenre("")}>All</button>
                 {GENRES.map(g => (
-                  <button key={g.id} className={`tag ${selectedGenre === String(g.id) ? "active" : ""}`} onClick={() => changeGenre(String(g.id))}>{g.name}</button>
+                  <button key={g} className={`tag ${selectedGenre === g ? "active" : ""}`} onClick={() => changeGenre(g)}>{g}</button>
                 ))}
               </div>
             </div>
@@ -329,7 +380,7 @@ export default function App() {
               <>
                 <div className="grid">
                   {anime.map(a => (
-                    <div key={a.mal_id} className="card" onClick={() => openAnime(a)}>
+                    <div key={a.id} className="card" onClick={() => openAnime(a)}>
                       {a.images?.jpg?.image_url
                         ? <img src={a.images.jpg.image_url} alt={a.title} style={{ width: "100%", aspectRatio: "2/3", objectFit: "cover", display: "block" }} loading="lazy" />
                         : <div style={{ aspectRatio: "2/3", background: "#1e1a2e", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🌸</div>}
@@ -413,7 +464,7 @@ export default function App() {
                   
                   {episodes.length === 0 ? (
                     <div className="warn-box" style={{ marginBottom: 16 }}>
-                      ⚠️ No episode data available from MyAnimeList for this anime.
+                      ⚠️ No episode data available from AniList for this anime.
                     </div>
                   ) : (
                     <button className="btn" style={{ fontSize: 15, padding: "12px 28px" }} onClick={() => startWatching(season, 1)} disabled={!tmdbId}>
@@ -451,7 +502,7 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {history.map((h, i) => (
                   <div key={i} className="hist-card" onClick={() => { 
-                    setSelected({ mal_id: h.id, title: h.name, images: { jpg: { image_url: h.poster } } }); 
+                    setSelected({ id: h.id, mal_id: h.malId || h.id, title: h.name, images: { jpg: { image_url: h.poster } } }); 
                     setTmdbId(h.tmdbId);
                     setSeason(h.season); 
                     setEpisode(h.episode); 
