@@ -2,6 +2,9 @@
   "functions": {
     "api/anilist.js": {
       "runtime": "edge"
+    },
+    "api/cover.js": {
+      "runtime": "edge"
     }
   }
 }

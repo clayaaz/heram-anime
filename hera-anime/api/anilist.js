@@ -1,6 +1,6 @@
-export const config = { runtime: "edge" };
+import { fetchAniList } from "./anilist-upstream.js";
 
-const ANILIST_URL = "https://graphql.anilist.co/";
+export const config = { runtime: "edge" };
 
 function corsHeaders(request) {
   const origin = request.headers.get("Origin") || "*";
@@ -29,21 +29,12 @@ export default async function handler(request) {
 
   try {
     const body = await request.text();
-    const upstream = await fetch(ANILIST_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body,
-    });
-
-    const text = await upstream.text();
-    return new Response(text, {
+    const upstream = await fetchAniList(body);
+    return new Response(upstream.text, {
       status: upstream.status,
       headers: {
         ...cors,
-        "Content-Type": upstream.headers.get("Content-Type") || "application/json",
+        "Content-Type": upstream.contentType,
       },
     });
   } catch (error) {

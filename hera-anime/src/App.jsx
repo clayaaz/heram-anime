@@ -56,6 +56,15 @@ const ANIME_DETAIL_QUERY = `
   }
 `;
 
+function proxiedCover(url) {
+  if (!url) return "";
+  if (url.startsWith("/api/cover")) return url;
+  if (/^https:\/\/s\d+\.anilist\.co\//i.test(url)) {
+    return `/api/cover?u=${encodeURIComponent(url)}`;
+  }
+  return url;
+}
+
 function getHistory() {
   try { return JSON.parse(localStorage.getItem("anime_history") || "[]"); }
   catch { return []; }
@@ -94,7 +103,7 @@ function normalizeMedia(media) {
     mal_id: media.idMal ?? media.id,
     title: media.title?.english || media.title?.romaji || "Unknown",
     title_japanese: media.title?.native,
-    images: { jpg: { image_url: media.coverImage?.large || media.coverImage?.medium || "" } },
+    images: { jpg: { image_url: proxiedCover(media.coverImage?.large || media.coverImage?.medium || "") } },
     score: media.averageScore ? media.averageScore / 10 : 0,
     year: media.startDate?.year,
     aired: media.startDate?.year ? { prop: { from: { year: media.startDate.year } } } : undefined,
@@ -382,7 +391,7 @@ export default function App() {
                   {anime.map(a => (
                     <div key={a.id} className="card" onClick={() => openAnime(a)}>
                       {a.images?.jpg?.image_url
-                        ? <img src={a.images.jpg.image_url} alt={a.title} style={{ width: "100%", aspectRatio: "2/3", objectFit: "cover", display: "block" }} loading="lazy" />
+                        ? <img src={a.images.jpg.image_url} alt={a.title} referrerPolicy="no-referrer" style={{ width: "100%", aspectRatio: "2/3", objectFit: "cover", display: "block" }} loading="lazy" />
                         : <div style={{ aspectRatio: "2/3", background: "#1e1a2e", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🌸</div>}
                       <div style={{ padding: "10px 10px 12px" }}>
                         <p style={{ fontSize: 13, fontWeight: 600, color: "#e0daf5", lineHeight: 1.3, marginBottom: 4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{a.title}</p>
@@ -439,7 +448,7 @@ export default function App() {
               <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 32 }}>
                 <div>
                   {selected.images?.jpg?.image_url
-                    ? <img src={selected.images.jpg.image_url} alt={selected.title} style={{ width: "100%", borderRadius: 10 }} />
+                    ? <img src={proxiedCover(selected.images.jpg.image_url)} alt={selected.title} referrerPolicy="no-referrer" style={{ width: "100%", borderRadius: 10 }} />
                     : <div style={{ aspectRatio: "2/3", background: "#1e1a2e", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48 }}>🌸</div>}
                 </div>
                 <div>
@@ -510,7 +519,7 @@ export default function App() {
                     setWatching(true); 
                   }}>
                     {h.poster
-                      ? <img src={h.poster} alt={h.name} style={{ width: 52, height: 74, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />
+                      ? <img src={proxiedCover(h.poster)} alt={h.name} referrerPolicy="no-referrer" style={{ width: 52, height: 74, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />
                       : <div style={{ width: 52, height: 74, background: "#1e1a2e", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>🌸</div>}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: 600, color: "#e0daf5", fontSize: 15, marginBottom: 4 }}>{h.name}</p>
