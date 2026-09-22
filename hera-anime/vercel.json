@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/anilist.js": {
+      "runtime": "edge"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const ANILIST_URL = "https://graphql.anilist.co";
+const ANILIST_URL = "/api/anilist";
 const TMDB_KEY = "84f78b5761422e64caf879f69c8b8e33";
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const VIDSRC = "https://vidsrc-embed.ru/embed/tv";
